@@ -1,0 +1,65 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and storage information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "storageUsed": { "type": "number" },
+        "totalStorage": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "storageUsed", "totalStorage"]
+    },
+    "File": {
+      "title": "File",
+      "description": "Metadata for an uploaded file",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "size": { "type": "number" },
+        "ownerId": { "type": "string" },
+        "parentId": { "type": "string" },
+        "downloadUrl": { "type": "string" },
+        "isStarred": { "type": "boolean" },
+        "isDeleted": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "type", "size", "ownerId", "parentId"]
+    },
+    "Folder": {
+      "title": "Folder",
+      "description": "Folder information for organization",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "parentId": { "type": "string" },
+        "isStarred": { "type": "boolean" },
+        "isDeleted": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "ownerId", "parentId"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile documents"
+    },
+    "/files/{fileId}": {
+      "schema": "File",
+      "description": "Metadata for all files"
+    },
+    "/folders/{folderId}": {
+      "schema": "Folder",
+      "description": "Folder documents"
+    }
+  }
+}
