@@ -16,7 +16,6 @@ export interface FileMetadata {
   ownerId: string;
   parentId: string;
   downloadUrl: string;
-  firebaseUrl?: string;
   isStarred: boolean;
   isDeleted: boolean;
   isShared: boolean;

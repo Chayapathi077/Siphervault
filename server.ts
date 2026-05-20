@@ -90,11 +90,14 @@ async function initDb() {
     )
   `);
 
-  try {
-    await db.execute("ALTER TABLE files ADD COLUMN firebase_url TEXT");
-  } catch (e) {
-    // Column already exists
-  }
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS file_chunks (
+      file_id TEXT,
+      chunk_index INTEGER,
+      data BLOB,
+      PRIMARY KEY (file_id, chunk_index)
+    )
+  `);
 
   // Set default storage limit to 2GB for existing users without successful transactions
   try {
@@ -215,7 +218,7 @@ app.get("/api/files", async (req, res) => {
     if (!userId) return res.status(400).json({ error: "Missing userId" });
 
     const result = await db.execute({ 
-      sql: "SELECT id, name, type, size, owner_id, parent_id, firebase_url, is_starred, is_deleted, is_shared, created_at, updated_at FROM files WHERE owner_id = ? ORDER BY created_at DESC", 
+      sql: "SELECT id, name, type, size, owner_id, parent_id, is_starred, is_deleted, is_shared, created_at, updated_at FROM files WHERE owner_id = ? ORDER BY created_at DESC", 
       args: [userId as string] 
     });
     
@@ -227,8 +230,7 @@ app.get("/api/files", async (req, res) => {
       size: Number(row.size),
       ownerId: row.owner_id,
       parentId: row.parent_id,
-      downloadUrl: row.firebase_url ? (row.firebase_url as string) : `/api/files/media?id=${encodeURIComponent(row.id as string)}`,
-      firebaseUrl: row.firebase_url,
+      downloadUrl: `/api/files/media?id=${encodeURIComponent(row.id as string)}`,
       isStarred: Boolean(row.is_starred),
       isDeleted: Boolean(row.is_deleted),
       isShared: Boolean(row.is_shared),
@@ -242,12 +244,13 @@ app.get("/api/files", async (req, res) => {
   }
 });
 
-// Upload file metadata to DB (Actual file uploaded directly to Firebase Storage by client)
-app.post("/api/files/upload", async (req, res) => {
+// Legacy / Small file upload (e.g. profile photos)
+app.post("/api/files/upload", upload.single("file"), async (req, res) => {
   try {
-    const { userId, parentId, file } = req.body;
+    const file = req.file;
+    const { userId, parentId } = req.body;
     
-    if (!file || !file.name || !file.size) return res.status(400).json({ error: "No file metadata provided" });
+    if (!file) return res.status(400).json({ error: "No file uploaded" });
     if (!userId) return res.status(400).json({ error: "No userId provided" });
 
     // Validate storage limit
@@ -263,11 +266,11 @@ app.post("/api/files/upload", async (req, res) => {
 
     const result = await db.execute({
       sql: `
-        INSERT INTO files (id, name, type, size, owner_id, parent_id, firebase_url) 
+        INSERT INTO files (id, name, type, size, owner_id, parent_id, file_data) 
         VALUES (?, ?, ?, ?, ?, ?, ?)
-        RETURNING id, name, type, size, owner_id, parent_id, firebase_url, is_starred, is_deleted, is_shared, created_at, updated_at
+        RETURNING id, name, type, size, owner_id, parent_id, is_starred, is_deleted, is_shared, created_at, updated_at
       `, 
-      args: [id, file.name, file.type || 'application/octet-stream', file.size, userId, parentId || 'root', file.firebaseUrl || null]
+      args: [id, file.originalname, file.mimetype, file.size, userId, parentId || 'root', file.buffer]
     });
 
     // Update user storage
@@ -281,8 +284,7 @@ app.post("/api/files/upload", async (req, res) => {
       size: Number(row.size),
       ownerId: row.owner_id,
       parentId: row.parent_id,
-      downloadUrl: row.firebase_url ? (row.firebase_url as string) : `/api/files/media?id=${encodeURIComponent(row.id as string)}`,
-      firebaseUrl: row.firebase_url,
+      downloadUrl: `/api/files/media?id=${encodeURIComponent(row.id as string)}`,
       isStarred: Boolean(row.is_starred),
       isDeleted: Boolean(row.is_deleted),
       isShared: Boolean(row.is_shared),
@@ -293,6 +295,81 @@ app.post("/api/files/upload", async (req, res) => {
     res.json({ message: "File uploaded successfully", file: formattedFile });
   } catch (error: any) {
     console.error("Upload error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Chunked Upload Endpoints
+app.post("/api/files/upload/init", async (req, res) => {
+  try {
+    const id = crypto.randomUUID();
+    res.json({ id });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/files/upload/chunk", upload.single("chunk"), async (req, res) => {
+  try {
+    const { fileId, chunkIndex } = req.body;
+    const chunk = req.file;
+    if (!chunk || !fileId || chunkIndex === undefined) return res.status(400).json({ error: "Missing chunk data" });
+
+    await db.execute({
+      sql: "INSERT INTO file_chunks (file_id, chunk_index, data) VALUES (?, ?, ?)",
+      args: [fileId, parseInt(chunkIndex), chunk.buffer]
+    });
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error("Chunk upload error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/files/upload/complete", async (req, res) => {
+  try {
+    const { id, name, type, size, userId, parentId } = req.body;
+    
+    // Validate storage limit
+    const userResult = await db.execute({ sql: "SELECT storage_used, total_storage FROM users WHERE id = ?", args: [userId] });
+    if (userResult.rows.length > 0) {
+      const user = userResult.rows[0];
+      if (Number(user.storage_used) + size > Number(user.total_storage)) {
+        return res.status(400).json({ error: "Storage limit exceeded. Please upgrade your plan." });
+      }
+    }
+
+    const result = await db.execute({
+      sql: `
+        INSERT INTO files (id, name, type, size, owner_id, parent_id) 
+        VALUES (?, ?, ?, ?, ?, ?)
+        RETURNING id, name, type, size, owner_id, parent_id, is_starred, is_deleted, is_shared, created_at, updated_at
+      `, 
+      args: [id, name, type || 'application/octet-stream', size, userId, parentId || 'root']
+    });
+
+    // Update user storage
+    await db.execute({ sql: "UPDATE users SET storage_used = storage_used + ? WHERE id = ?", args: [size, userId] });
+
+    const row = result.rows[0];
+    const formattedFile = {
+      id: row.id,
+      name: row.name,
+      type: row.type,
+      size: Number(row.size),
+      ownerId: row.owner_id,
+      parentId: row.parent_id,
+      downloadUrl: `/api/files/media?id=${encodeURIComponent(row.id as string)}`,
+      isStarred: Boolean(row.is_starred),
+      isDeleted: Boolean(row.is_deleted),
+      isShared: Boolean(row.is_shared),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+
+    res.json({ message: "File uploaded successfully", file: formattedFile });
+  } catch (error: any) {
+    console.error("Complete upload error:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -389,24 +466,29 @@ app.get("/api/files/media", async (req, res) => {
     const { id } = req.query;
     if (!id || typeof id !== "string") return res.status(400).json({ error: "Missing id parameter" });
 
-    const result = await db.execute({ sql: "SELECT file_data, firebase_url, type FROM files WHERE id = ?", args: [id] });
+    const result = await db.execute({ sql: "SELECT file_data, type FROM files WHERE id = ?", args: [id] });
     
     if (result.rows.length === 0) return res.status(404).json({ error: "File not found" });
 
     const file = result.rows[0];
-    
-    if (file.firebase_url) {
-      return res.redirect(file.firebase_url as string);
-    }
-    
-    if (!file.file_data) {
-       return res.status(404).json({ error: "File data is empty" });
-    }
-    
-    const buffer = file.file_data as ArrayBuffer;
-    
     res.setHeader('Content-Type', file.type as string);
-    res.send(Buffer.from(buffer));
+    
+    if (file.file_data) {
+       res.send(Buffer.from(file.file_data as ArrayBuffer));
+    } else {
+       // Stream chunks sequentially
+       let chunkIndex = 0;
+       while (true) {
+         const chunkResult = await db.execute({ 
+           sql: "SELECT data FROM file_chunks WHERE file_id = ? AND chunk_index = ?", 
+           args: [id, chunkIndex] 
+         });
+         if (chunkResult.rows.length === 0) break;
+         res.write(Buffer.from(chunkResult.rows[0].data as ArrayBuffer));
+         chunkIndex++;
+       }
+       res.end();
+    }
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -416,7 +498,7 @@ app.get("/api/files/media", async (req, res) => {
 app.get("/api/files/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await db.execute({ sql: "SELECT id, name, type, size, owner_id, parent_id, firebase_url, is_starred, is_deleted, is_shared, created_at, updated_at FROM files WHERE id = ?", args: [id] });
+    const result = await db.execute({ sql: "SELECT id, name, type, size, owner_id, parent_id, is_starred, is_deleted, is_shared, created_at, updated_at FROM files WHERE id = ?", args: [id] });
     
     if (result.rows.length === 0) return res.status(404).json({ error: "File not found" });
     
@@ -428,8 +510,7 @@ app.get("/api/files/:id", async (req, res) => {
       size: Number(row.size),
       ownerId: row.owner_id,
       parentId: row.parent_id,
-      downloadUrl: row.firebase_url ? (row.firebase_url as string) : `/api/files/media?id=${encodeURIComponent(row.id as string)}`,
-      firebaseUrl: row.firebase_url,
+      downloadUrl: `/api/files/media?id=${encodeURIComponent(row.id as string)}`,
       isStarred: Boolean(row.is_starred),
       isDeleted: Boolean(row.is_deleted),
       isShared: Boolean(row.is_shared),
@@ -456,6 +537,7 @@ app.delete("/api/files/:id", async (req, res) => {
 
     // Delete from DB
     await db.execute({ sql: "DELETE FROM files WHERE id = ?", args: [id] });
+    await db.execute({ sql: "DELETE FROM file_chunks WHERE file_id = ?", args: [id] });
     
     // Update user storage
     await db.execute({ sql: "UPDATE users SET storage_used = MAX(0, storage_used - ?) WHERE id = ?", args: [file.size, file.owner_id] });

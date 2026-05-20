@@ -18,7 +18,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   user, userProfile, storageUsed, totalStorage, onUpdateProfile, onMenuClick 
 }) => {
   const defaultName = userProfile?.displayName || user.displayName || '';
-  const defaultPhoto = userProfile?.photoURL || user.photoURL || null;
+  let defaultPhoto = userProfile?.photoURL || user.photoURL || null;
+  if (defaultPhoto && defaultPhoto.includes('googleusercontent.com')) {
+    defaultPhoto = defaultPhoto.replace('=s96-c', '=s400-c');
+  }
   const [displayName, setDisplayName] = useState(defaultName);
   const [photoBase64, setPhotoBase64] = useState<string | null>(defaultPhoto);
 

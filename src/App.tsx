@@ -5,8 +5,7 @@
 
 import React, { useState, useEffect } from "react";
 import { onAuthStateChanged, updateProfile, User } from "firebase/auth";
-import { auth, loginWithGoogle, logout, storage } from "./lib/firebase";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { auth, loginWithGoogle, logout } from "./lib/firebase";
 import { FileMetadata, UserProfile } from "./types";
 import { motion } from "motion/react";
 import { Navbar } from "./components/Navbar";
@@ -229,23 +228,41 @@ export default function App() {
       }
 
       for (const file of uploadedFiles) {
-        // Upload to Firebase Storage
-        const fileRef = ref(storage, `users/${user.uid}/${Date.now()}_${file.name}`);
-        await uploadBytes(fileRef, file);
-        const firebaseUrl = await getDownloadURL(fileRef);
+        // Init upload
+        const initRes = await fetch("/api/files/upload/init", { method: "POST" });
+        if (!initRes.ok) throw new Error("Failed to initialize upload");
+        const { id: fileId } = await initRes.json();
+        
+        const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+        
+        for (let i = 0; i < totalChunks; i++) {
+          const chunk = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+          const formData = new FormData();
+          formData.append("fileId", fileId);
+          formData.append("chunkIndex", i.toString());
+          formData.append("chunk", chunk);
+          
+          const chunkRes = await fetch("/api/files/upload/chunk", {
+            method: "POST",
+            body: formData,
+          });
+          if (!chunkRes.ok) {
+            const err = await chunkRes.json().catch(() => ({}));
+            throw new Error(err.error || "Chunk upload failed");
+          }
+        }
 
         const payload = {
+          id: fileId,
           userId: user.uid,
           parentId: "root",
-          file: {
-            name: file.name,
-            type: file.type,
-            size: file.size,
-            firebaseUrl: firebaseUrl,
-          }
+          name: file.name,
+          type: file.type,
+          size: file.size
         };
 
-        const res = await fetch("/api/files/upload", {
+        const res = await fetch("/api/files/upload/complete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
@@ -253,7 +270,7 @@ export default function App() {
 
         if (!res.ok) {
           const errorData = await res.json();
-          throw new Error(errorData.error || "Upload failed");
+          throw new Error(errorData.error || "Upload complete failed");
         }
       }
 
