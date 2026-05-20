@@ -236,6 +236,7 @@ export default function App() {
         const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB
         const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
         
+        const chunkPromises = [];
         for (let i = 0; i < totalChunks; i++) {
           const chunk = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
           const formData = new FormData();
@@ -243,15 +244,21 @@ export default function App() {
           formData.append("chunkIndex", i.toString());
           formData.append("chunk", chunk);
           
-          const chunkRes = await fetch("/api/files/upload/chunk", {
-            method: "POST",
-            body: formData,
-          });
-          if (!chunkRes.ok) {
-            const err = await chunkRes.json().catch(() => ({}));
-            throw new Error(err.error || "Chunk upload failed");
-          }
+          chunkPromises.push(
+            fetch("/api/files/upload/chunk", {
+              method: "POST",
+              body: formData,
+            }).then(async chunkRes => {
+              if (!chunkRes.ok) {
+                const err = await chunkRes.json().catch(() => ({}));
+                throw new Error(err.error || "Chunk upload failed");
+              }
+            })
+          );
         }
+        
+        // Wait for all chunks to upload concurrently
+        await Promise.all(chunkPromises);
 
         const payload = {
           id: fileId,

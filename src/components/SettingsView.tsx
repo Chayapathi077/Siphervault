@@ -55,8 +55,34 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       const file = e.target.files[0];
       setIsUploadingPhoto(true);
       try {
+        // Compress image using Canvas
+        const img = new Image();
+        img.src = URL.createObjectURL(file);
+        await new Promise(resolve => img.onload = resolve);
+        
+        const canvas = document.createElement('canvas');
+        const MAX_SIZE = 400;
+        let width = img.width;
+        let height = img.height;
+        if (width > height && width > MAX_SIZE) {
+          height *= MAX_SIZE / width;
+          width = MAX_SIZE;
+        } else if (height > MAX_SIZE) {
+          width *= MAX_SIZE / height;
+          height = MAX_SIZE;
+        }
+        
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        
+        // Convert to blob
+        const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
+        if (!blob) throw new Error("Compression failed");
+
         const formData = new FormData();
-        formData.append("file", file);
+        formData.append("file", blob, "profile.jpg");
         formData.append("userId", user.uid);
         formData.append("parentId", "hidden_profile_photos");
 
