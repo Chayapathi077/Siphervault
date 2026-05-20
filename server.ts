@@ -1,5 +1,4 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import path from "path";
 import multer from "multer";
 import cors from "cors";
@@ -660,6 +659,8 @@ app.post("/api/payments/verify-razorpay-subscription", async (req, res) => {
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     // Development mode with Vite HM(R disabled in platform) and middleware
+    const viteModule = await import("vite");
+    const createViteServer = viteModule.createServer;
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
