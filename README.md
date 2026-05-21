@@ -54,3 +54,6 @@ This project is fully configured to be deployed on **Vercel**.
 2. Import the project in Vercel.
 3. Add your Environment Variables (from `.env`) in the Vercel Dashboard.
 4. Deploy! The `vercel.json` file handles all the API routing routing automatically.
+
+## 📄 License
+© 2026 Siphervault. All rights reserved.
