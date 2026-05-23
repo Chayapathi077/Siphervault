@@ -302,3 +302,6 @@ RAZORPAY_KEY_SECRET=your_razorpay_secret
 Siphervault is a production-grade, full-stack encrypted cloud storage platform. Users log in via Firebase, upload any file type into a personal 2GB vault powered by Turso's edge database, and can share files with anyone via short, controlled-access links — all wrapped in a premium glassmorphic dark UI. 
 
 **Deployment Magic:** Large files are chunked client-side and uploaded in parallel to bypass Vercel serverless limits. Pro users can expand to 100GB via Razorpay. The entire stack — React, Express, Turso, Firebase, Razorpay — is deployed globally on **Vercel** with zero infrastructure to manage.
+
+## 📄 License
+© 2026 Siphervault. All rights reserved.
